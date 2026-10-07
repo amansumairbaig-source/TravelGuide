@@ -89,6 +89,34 @@ class GenerateAudioGuideTests(unittest.TestCase):
             "en-US",
         )
 
+    def test_reports_temporary_gemini_overload_as_retryable(self):
+        error = travel_app.APIError(
+            503,
+            {
+                "error": {
+                    "code": 503,
+                    "message": "The model is temporarily unavailable.",
+                    "status": "UNAVAILABLE",
+                }
+            },
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {"GEMINI_API_KEY": "test-key", "MURF_AI_API_KEY": "test-key"},
+            ),
+            patch.object(travel_app, "generate_description", side_effect=error),
+            patch.object(travel_app, "generate_speech") as generate_speech,
+        ):
+            response = self.client.post(
+                "/generate-audio-guide",
+                json=self.request_data,
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("temporarily busy", response.get_json()["error"])
+        generate_speech.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

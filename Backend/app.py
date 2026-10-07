@@ -1,6 +1,7 @@
 import base64
 import logging
 import os
+import time
 from pathlib import Path
 
 import requests
@@ -57,10 +58,19 @@ def generate_description(place: str, answer_type: str, language: str) -> str:
         raise ConfigurationError("GEMINI_API_KEY is not configured.")
 
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=PROMPTS[answer_type].format(place=place, language=language),
-    )
+    prompt = PROMPTS[answer_type].format(place=place, language=language)
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+            )
+            break
+        except APIError as error:
+            if error.code != 503 or attempt == 2:
+                raise
+            time.sleep(attempt + 1)
+
     try:
         description = (response.text or "").strip()
     except ValueError as error:
@@ -139,8 +149,12 @@ def generate_audio_guide():
     except ConfigurationError as error:
         logger.error("%s", error)
         return jsonify({"error": "Configure both Gemini and Murf API keys to generate a guide."}), 503
-    except APIError:
+    except APIError as error:
         logger.exception("Gemini guide generation failed.")
+        if error.code == 503:
+            return jsonify(
+                {"error": "Gemini is temporarily busy. Please try again shortly."}
+            ), 503
         return jsonify({"error": "Gemini could not generate the guide. Please try again."}), 502
     except requests.RequestException:
         logger.exception("Murf audio generation failed.")
